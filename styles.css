@@ -1,0 +1,9 @@
+/* Notifier plugin styles */
+
+.notifier-modal .setting-item {
+    border-top: none;
+}
+
+.notifier-modal h2 {
+    margin-bottom: 0.5em;
+}
