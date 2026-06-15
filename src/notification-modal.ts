@@ -158,6 +158,12 @@ export class NotificationModal extends Modal {
 			.onClick(() => this.testNotification())
 		);
 
+		// Cancel
+		buttonRow.addButton(btn => btn
+			.setButtonText('Cancel')
+			.onClick(() => this.close())
+		);
+
 		// Save
 		buttonRow.addButton(btn => btn
 			.setButtonText('Save')

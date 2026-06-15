@@ -1,9 +1,58 @@
 /* Notifier plugin styles */
 
-.notifier-modal .setting-item {
-    border-top: none;
+.notifier-modal {
+    padding: 0.5em 0.25em;
 }
 
 .notifier-modal h2 {
-    margin-bottom: 0.5em;
+    margin-bottom: 0.75em;
+    font-size: 1.25em;
+    border-bottom: 2px solid var(--color-accent);
+    padding-bottom: 0.4em;
+    color: var(--text-normal);
+}
+
+.notifier-modal .setting-item {
+    border-top: none;
+    padding: 0.5em 0;
+}
+
+.notifier-modal .setting-item-name {
+    font-weight: 600;
+}
+
+/* Day-of-week buttons */
+.notifier-days {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.notifier-day-btn {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.82em;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.notifier-day-btn:hover {
+    border-color: var(--color-accent);
+    color: var(--text-normal);
+}
+
+.notifier-day-btn.active {
+    background: var(--color-accent);
+    color: var(--text-on-accent);
+    border-color: var(--color-accent);
+}
+
+/* Button row */
+.notifier-modal .setting-item:last-child {
+    margin-top: 0.5em;
+    border-top: 1px solid var(--background-modifier-border) !important;
+    padding-top: 0.75em;
 }
