@@ -1,14 +1,10 @@
-import { NotificationEntry } from './types';
+import { NotificationEntry } from "./types";
 
 /**
  * Check if a notification should fire right now.
  * Uses a 60-second window to avoid missing due to timing jitter.
  */
-export function shouldFire(
-	entry: NotificationEntry,
-	now: Date,
-	lastFired: string | undefined
-): boolean {
+export function shouldFire(entry: NotificationEntry, now: Date, lastFired: string | undefined): boolean {
 	if (!entry.enabled) return false;
 
 	// Snoozed?
@@ -18,7 +14,7 @@ export function shouldFire(
 	}
 
 	// Check time match (within 60s window)
-	const [targetH, targetM] = entry.time.split(':').map(Number);
+	const [targetH = 0, targetM = 0] = entry.time.split(":").map(Number);
 	const nowH = now.getHours();
 	const nowM = now.getMinutes();
 	const nowTotalMin = nowH * 60 + nowM;
@@ -41,21 +37,21 @@ export function shouldFire(
 	if (entry.endDate && todayStr > entry.endDate) return false;
 
 	switch (entry.scheduleType) {
-		case 'once':
+		case "once":
 			return entry.date === todayStr;
 
-		case 'daily':
+		case "daily":
 			return true;
 
-		case 'weekly':
+		case "weekly":
 			return (entry.daysOfWeek ?? []).includes(now.getDay());
 
-		case 'monthly':
+		case "monthly":
 			return now.getDate() === (entry.dayOfMonth ?? 1);
 
-		case 'custom': {
+		case "custom": {
 			if (!entry.customIntervalDays || !entry.customIntervalStartDate) return false;
-			const anchor = new Date(entry.customIntervalStartDate + 'T00:00:00');
+			const anchor = new Date(entry.customIntervalStartDate + "T00:00:00");
 			const diffDays = Math.floor((now.getTime() - anchor.getTime()) / 86_400_000);
 			return diffDays >= 0 && diffDays % entry.customIntervalDays === 0;
 		}
@@ -73,7 +69,7 @@ export function getNextOccurrence(entry: NotificationEntry): Date | null {
 	if (!entry.enabled) return null;
 
 	const now = new Date();
-	const [targetH, targetM] = entry.time.split(':').map(Number);
+	const [targetH = 0, targetM = 0] = entry.time.split(":").map(Number);
 
 	// Start from today at target time
 	const candidate = new Date(now);
@@ -96,22 +92,22 @@ export function getNextOccurrence(entry: NotificationEntry): Date | null {
 
 		let match = false;
 		switch (entry.scheduleType) {
-			case 'once':
+			case "once":
 				if (entry.date === dateStr) match = true;
 				else if (entry.date && dateStr > entry.date) return null;
 				break;
-			case 'daily':
+			case "daily":
 				match = true;
 				break;
-			case 'weekly':
+			case "weekly":
 				match = (entry.daysOfWeek ?? []).includes(candidate.getDay());
 				break;
-			case 'monthly':
+			case "monthly":
 				match = candidate.getDate() === (entry.dayOfMonth ?? 1);
 				break;
-			case 'custom': {
+			case "custom": {
 				if (entry.customIntervalDays && entry.customIntervalStartDate) {
-					const anchor = new Date(entry.customIntervalStartDate + 'T00:00:00');
+					const anchor = new Date(entry.customIntervalStartDate + "T00:00:00");
 					const diffDays = Math.floor((candidate.getTime() - anchor.getTime()) / 86_400_000);
 					match = diffDays >= 0 && diffDays % entry.customIntervalDays === 0;
 				}
@@ -130,29 +126,29 @@ export function getNextOccurrence(entry: NotificationEntry): Date | null {
  * Build a human-readable schedule summary.
  */
 export function scheduleSummary(entry: NotificationEntry): string {
-	const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+	const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 	switch (entry.scheduleType) {
-		case 'once':
-			return `Once on ${entry.date ?? '?'} at ${entry.time}`;
-		case 'daily':
+		case "once":
+			return `Once on ${entry.date ?? "?"} at ${entry.time}`;
+		case "daily":
 			return `Daily at ${entry.time}`;
-		case 'weekly': {
-			const days = (entry.daysOfWeek ?? []).map(d => dayNames[d]).join(', ');
-			return `Weekly (${days || 'none'}) at ${entry.time}`;
+		case "weekly": {
+			const days = (entry.daysOfWeek ?? []).map((d) => dayNames[d]).join(", ");
+			return `Weekly (${days || "none"}) at ${entry.time}`;
 		}
-		case 'monthly':
+		case "monthly":
 			return `Monthly on day ${entry.dayOfMonth ?? 1} at ${entry.time}`;
-		case 'custom':
-			return `Every ${entry.customIntervalDays ?? '?'} days at ${entry.time}`;
+		case "custom":
+			return `Every ${entry.customIntervalDays ?? "?"} days at ${entry.time}`;
 		default:
 			return entry.time;
 	}
 }
 
-function formatDate(d: Date): string {
+export function formatDate(d: Date): string {
 	const y = d.getFullYear();
-	const m = String(d.getMonth() + 1).padStart(2, '0');
-	const day = String(d.getDate()).padStart(2, '0');
+	const m = String(d.getMonth() + 1).padStart(2, "0");
+	const day = String(d.getDate()).padStart(2, "0");
 	return `${y}-${m}-${day}`;
 }

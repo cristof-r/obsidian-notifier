@@ -1,11 +1,45 @@
-import { Notice, Plugin } from 'obsidian';
-import { NotifierSettings, DEFAULT_SETTINGS, NotificationEntry } from './types';
-import { shouldFire, getNextOccurrence } from './scheduler';
-import { NotifierSettingTab } from './settings';
-import { NotificationModal } from './notification-modal';
+import { App, Modal, Notice, Plugin, Setting } from "obsidian";
+import { focusObsidian } from "./electron-utils";
+import { NotificationModal } from "./notification-modal";
+import { formatDate, getNextOccurrence, shouldFire } from "./scheduler";
+import { NotifierSettingTab } from "./settings";
+import { SnoozeModal } from "./snooze-modal";
+import { DEFAULT_SETTINGS, NotificationEntry, NotifierSettings } from "./types";
 
 const SCHEDULER_INTERVAL_MS = 30_000;
-const MISSED_WINDOW_MS = 10 * 60_000; // fire "missed" notifications up to 10 min late
+const MISSED_WINDOW_MS = 10 * 60_000;
+
+class NotificationPickerModal extends Modal {
+	private heading: string;
+	private entries: NotificationEntry[];
+	private onSelect: (entry: NotificationEntry) => void;
+
+	constructor(app: App, heading: string, entries: NotificationEntry[], onSelect: (entry: NotificationEntry) => void) {
+		super(app);
+		this.heading = heading;
+		this.entries = entries;
+		this.onSelect = onSelect;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", { text: this.heading });
+
+		for (const entry of this.entries) {
+			new Setting(contentEl).setName(entry.title).addButton((btn) =>
+				btn.setButtonText("Select").onClick(() => {
+					this.onSelect(entry);
+					this.close();
+				}),
+			);
+		}
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
 
 export default class NotifierPlugin extends Plugin {
 	settings: NotifierSettings = DEFAULT_SETTINGS;
@@ -14,18 +48,15 @@ export default class NotifierPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// Request notification permission
-		if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+		if (typeof Notification !== "undefined" && Notification.permission === "default") {
 			Notification.requestPermission();
 		}
 
-		// Settings tab
 		this.addSettingTab(new NotifierSettingTab(this.app, this));
 
-		// Command: add notification
 		this.addCommand({
-			id: 'add-notification',
-			name: 'Add notification',
+			id: "add-notification",
+			name: "Add notification",
 			callback: () => {
 				new NotificationModal(this.app, null, async (entry) => {
 					this.settings.notifications.push(entry);
@@ -34,30 +65,65 @@ export default class NotifierPlugin extends Plugin {
 			},
 		});
 
-		// Ribbon icon
-		this.addRibbonIcon('bell', 'Add notification', () => {
+		this.addCommand({
+			id: "fire-notification-now",
+			name: "Fire notification now",
+			callback: () =>
+				this.openNotificationPicker("Fire notification", (entry) => {
+					this.fireNotification(entry);
+				}),
+		});
+
+		this.addCommand({
+			id: "skip-next-occurrence",
+			name: "Skip next notification occurrence",
+			callback: () =>
+				this.openNotificationPicker("Skip next occurrence", async (entry) => {
+					const next = getNextOccurrence(entry);
+					if (next) {
+						this.settings.lastFired[entry.id] = next.toISOString();
+						await this.saveSettings();
+						new Notice(`Skipped: ${entry.title}`);
+					} else {
+						new Notice(`No upcoming occurrence for: ${entry.title}`);
+					}
+				}),
+		});
+
+		this.addCommand({
+			id: "snooze-notification",
+			name: "Snooze notification",
+			callback: () =>
+				this.openNotificationPicker("Snooze notification", (entry) => {
+					new SnoozeModal(this.app, entry, async (e, until) => {
+						e.snoozedUntil = until.toISOString();
+						const idx = this.settings.notifications.findIndex((n) => n.id === e.id);
+						if (idx >= 0) this.settings.notifications[idx] = e;
+						await this.saveSettings();
+						new Notice(
+							`Snoozed "${e.title}" until ${until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+						);
+					}).open();
+				}),
+		});
+
+		this.addRibbonIcon("bell", "Add notification", () => {
 			new NotificationModal(this.app, null, async (entry) => {
 				this.settings.notifications.push(entry);
 				await this.saveSettings();
 			}).open();
 		});
 
-		// Status bar
 		this.statusBarEl = this.addStatusBarItem();
 		this.updateStatusBar();
 
-		// Start scheduler
-		this.registerInterval(
-			window.setInterval(() => this.tick(), SCHEDULER_INTERVAL_MS)
-		);
+		this.registerInterval(window.setInterval(() => this.tick(), SCHEDULER_INTERVAL_MS));
 
-		// Fire missed notifications on startup (if Obsidian was closed)
 		this.fireMissed();
 	}
 
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-		// Ensure notifications array exists
 		if (!Array.isArray(this.settings.notifications)) {
 			this.settings.notifications = [];
 		}
@@ -85,28 +151,32 @@ export default class NotifierPlugin extends Plugin {
 		}
 	}
 
-	/**
-	 * On startup, check if any notifications were missed while Obsidian was closed.
-	 * Only fires if the missed time was within MISSED_WINDOW_MS.
-	 */
 	private fireMissed(): void {
 		const now = new Date();
+		const todayStr = formatDate(now);
 
 		for (const entry of this.settings.notifications) {
 			if (!entry.enabled) continue;
 
 			const lastFired = this.settings.lastFired[entry.id];
-			if (!lastFired) continue;
 
-			const lastDate = new Date(lastFired);
-			const nextOcc = getNextOccurrence(entry);
-
-			// If next occurrence is in the past (we missed it) and within window
-			if (nextOcc && nextOcc < now) {
-				const missedMs = now.getTime() - nextOcc.getTime();
-				if (missedMs <= MISSED_WINDOW_MS) {
-					this.fireNotification(entry);
-					this.settings.lastFired[entry.id] = now.toISOString();
+			if (entry.scheduleType === "once") {
+				if (entry.date !== todayStr) continue;
+				const [h = 0, m = 0] = entry.time.split(":").map(Number);
+				const dueTime = new Date(now);
+				dueTime.setHours(h, m, 0, 0);
+				if (dueTime > now) continue;
+				if (lastFired && new Date(lastFired) >= dueTime) continue;
+				this.fireNotification(entry);
+				this.settings.lastFired[entry.id] = now.toISOString();
+			} else {
+				const nextOcc = getNextOccurrence(entry);
+				if (nextOcc && nextOcc < now) {
+					const missedMs = now.getTime() - nextOcc.getTime();
+					if (missedMs <= MISSED_WINDOW_MS) {
+						this.fireNotification(entry);
+						this.settings.lastFired[entry.id] = now.toISOString();
+					}
 				}
 			}
 		}
@@ -115,57 +185,50 @@ export default class NotifierPlugin extends Plugin {
 	}
 
 	private fireNotification(entry: NotificationEntry): void {
-		// System notification (Electron / Web API)
-		if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+		if (typeof Notification !== "undefined" && Notification.permission === "granted") {
 			const opts: NotificationOptions = {
 				body: entry.body || undefined,
 				silent: !entry.sound,
-				requireInteraction: entry.duration === 'persistent',
+				requireInteraction: entry.duration === "persistent",
 			};
 
 			const n = new Notification(entry.title, opts);
 
-			// Auto-close after duration
-			if (typeof entry.duration === 'number' && entry.duration > 0) {
+			if (typeof entry.duration === "number" && entry.duration > 0) {
 				setTimeout(() => n.close(), entry.duration * 1000);
 			}
 
-			// Click handler — bring Obsidian to front
 			n.onclick = () => {
-				this.focusObsidian();
+				focusObsidian();
+				if (entry.linkedNote) {
+					this.app.workspace.openLinkText(entry.linkedNote, "");
+				}
 				n.close();
 			};
 		} else {
-			// Fallback: Obsidian Notice
-			const duration = typeof entry.duration === 'number' ? entry.duration * 1000 : 0;
-			new Notice(`🔔 ${entry.title}${entry.body ? '\n' + entry.body : ''}`, duration || 10_000);
+			const duration = typeof entry.duration === "number" ? entry.duration * 1000 : 0;
+			new Notice(`🔔 ${entry.title}${entry.body ? "\n" + entry.body : ""}`, duration || 10_000);
 		}
 	}
 
-	/** Bring Obsidian window to front using Electron APIs */
-	private focusObsidian(): void {
-		try {
-			// eslint-disable-next-line @typescript-eslint/no-var-requires
-			const electron = require('electron');
-			const win = electron.remote.getCurrentWindow();
-			if (win.isMinimized()) win.restore();
-			win.show();
-			win.focus();
-		} catch {
-			window.focus();
+	private openNotificationPicker(heading: string, callback: (entry: NotificationEntry) => void): void {
+		const entries = this.settings.notifications.filter((e) => e.enabled);
+		if (entries.length === 0) {
+			new Notice("No active notifications configured.");
+			return;
 		}
+		new NotificationPickerModal(this.app, heading, entries, callback).open();
 	}
 
 	private updateStatusBar(): void {
 		if (!this.statusBarEl) return;
 
-		const active = this.settings.notifications.filter(e => e.enabled).length;
+		const active = this.settings.notifications.filter((e) => e.enabled).length;
 		if (active === 0) {
-			this.statusBarEl.setText('🔕 No notifications');
+			this.statusBarEl.setText("🔕 No notifications");
 			return;
 		}
 
-		// Find soonest next occurrence
 		let soonest: Date | null = null;
 		for (const entry of this.settings.notifications) {
 			if (!entry.enabled) continue;
@@ -175,9 +238,7 @@ export default class NotifierPlugin extends Plugin {
 			}
 		}
 
-		const nextStr = soonest
-			? soonest.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			: '—';
+		const nextStr = soonest ? soonest.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
 
 		this.statusBarEl.setText(`🔔 ${active} · Next: ${nextStr}`);
 	}
